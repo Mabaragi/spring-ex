@@ -1,0 +1,62 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 21
+      uses: actions/setup-java@v4
+      with:
+        java-version: '21'
+        distribution: 'temurin'
+        cache: maven
+
+    - name: Build with Maven
+      run: ./mvnw clean package -DskipTests
+
+    - name: Upload Build Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: spring-boot-app
+        path: target/*.jar
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Download Build Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: spring-boot-app
+        path: target/
+
+    - name: Copy JAR to EC2 via SCP
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USER }}
+        key: ${{ secrets.EC2_SSH_KEY }}
+        source: "target/*.jar"
+        target: "/home/ubuntu/spring-ex"
+
+    - name: Restart application on EC2 via SSH
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USER }}
+        key: ${{ secrets.EC2_SSH_KEY }}
+        script: |
+          # Kill existing tmux session if it exists
+          tmux kill-session -t spring-ex 2>/dev/null || true
+          
+          # Start a new tmux session running the new JAR
+          tmux new-session -d -s spring-ex "cd /home/ubuntu/spring-ex && java -jar target/step03_Register-0.0.1-SNAPSHOT.jar 2>&1 | tee -a spring-ex.log"
